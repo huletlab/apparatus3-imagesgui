@@ -8,7 +8,7 @@
 # - error seems to randomly appear
 # 4. Get Gaus2d working
 # 5. look up table for f1
-# 6. check if parameters are physical ie BetaMu = [-10:10] or so
+# 6. check if parameters are physical ie BetaMu = [-6:10]
 
 
 # Standard library imports
@@ -28,7 +28,7 @@ from matplotlib.pylab import *
 import import_data
 
 import warnings
-
+warnings.simplefilter('error')
 
 np_f1 = numpy.vectorize(f1)
 np_f2 = numpy.vectorize(f2)
@@ -41,7 +41,7 @@ def fermi2d(n0, BetaMu, rg, ry, cg, cy, b, mg, my):
     
 
 def myfun(y, g, n0, BetaMu, rg, ry, cg, cy, b, mg, my):
-    warnings.simplefilter('error')
+    
     try:
         return n0/f1(BetaMu) *\
         f1( BetaMu - fq(BetaMu) * ( pow( (g-cg)/rg, 2) + pow( (y-cy)/ry,2))) + b + mg*g + my*y
@@ -49,6 +49,7 @@ def myfun(y, g, n0, BetaMu, rg, ry, cg, cy, b, mg, my):
     except:
         print "I failed when the parameters were n0=%f, BetaMu=%f, rg=%f, ry=%f, cg=%f, cy=%f, b=%f, mg=%f, my=%f, "\
         % (n0, BetaMu, rg, ry, cg, cy, b, mg, my)
+        sys.exit()
     
 def gaus2d(n0, rg, ry, cg, cy, b, mg, my):
     # Returns a 2D gaussian function function
@@ -79,7 +80,7 @@ def moments(data):
     
 def crop(data):
     height, BetaMu, width_y, width_x, y, x, b, mg, my = moments(data)
-    return data[(x-width_x/0.8):(x+width_x/0.8),(y-width_y/0.8):(y+width_y/0.8)]
+    return data[(x-width_x/0.5):(x+width_x/0.5),(y-width_y/0.5):(y+width_y/0.5)]
     
 def errorfunc(data):    
     return lambda p: ravel( numpy.vectorize(fermi2d(*p))(*indices(data.shape)) - data)
@@ -100,7 +101,7 @@ def fitfermi2d(data):
 if __name__ == '__main__':
     #Data matrix
     data = import_data.load('','6043')
-    #data = crop(data)
+    data = crop(data)
     
     print data.shape
     
