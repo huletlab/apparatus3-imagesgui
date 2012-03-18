@@ -27,7 +27,7 @@ from chaco.tools.api import LineInspector, PanTool, RangeSelection, \
                                    RangeSelectionOverlay, ZoomTool
 from enable.api import Window
 from traits.api import Any, Array, Callable, CFloat, CInt, Enum, Event, Float, HasTraits, \
-                             Int, Instance, Str, Trait, on_trait_change, File
+                             Int, Instance, Str, Trait, on_trait_change, File, Password
 from traitsui.api import Group, Handler, HGroup, Item, View, HSplit, VSplit
 from traitsui.menu import Action, CloseAction, Menu, \
                                      MenuBar, NoButtons, Separator
@@ -36,11 +36,38 @@ from traitsui.menu import Action, CloseAction, Menu, \
 from import_data import load, load_fits
     
 
+#-------------------------------------------------------------------------------
+#  GetPassword Class
+#-------------------------------------------------------------------------------
+
+class GetPassword ( HasTraits ): 
+    """ This class prompts the user for login and password
+    """
+    # Define a trait for user_name and password
+    user_name     = Str( "" ) 
+    password         = Password
+    # TextEditor display with secret typing capability (for Password traits):
+    text_pass_group = Group( Group( Item('user_name', resizable=True),
+                                           style='simple', 
+                                           show_border=False), 
+                                    Group(Item('password', resizable=True),
+                                          style='custom', 
+                                          show_border=False))
+    # The view 
+    view1 = View(text_pass_group, 
+                 title = 'Password',
+                 buttons = ['OK'])
+    def uname(self):
+	    return self.user_name
+    def pwd(self):
+	    return self.password
+	
 
 class ImageGUI(HasTraits):
     
     # TO FIX : put here the last available shot
-    shot = File('L:\\data\\app3\\2011\\1108\\110823\\column_5200.ascii')
+    #shot = File('L:\\data\\app3\\2011\\1108\\110823\\column_5200.ascii')
+    shot = File('/home/pmd/atomcool/lab/data/app3/2012/1203/120307/column_3195.ascii')
     
     #---------------------------------------------------------------------------
     # Traits View Definitions
@@ -242,7 +269,7 @@ class ImageGUI(HasTraits):
         
     def load_imagedata(self):
         try:
-            dir = self.shot[self.shot.index(':\\')+2:self.shot.rindex('\\')+1]
+            dir = self.shot[:self.shot.rindex('/')+1]
             shotnum = self.shot[self.shot.rindex('_')+1:self.shot.rindex('.ascii')]
         except ValueError:
             print " *** Not a valid column density path *** " 
@@ -402,6 +429,16 @@ def show_plot(**kwargs):
     modelview.configure_traits()
 
 
+
 if __name__ == '__main__':
-    #demo.configure_traits()
+    # Setup ssh access to be able to perform fitting routines
+    demo =  GetPassword()
+    demo.configure_traits()
+    
+    print demo.uname()
+    print demo.pwd()
+
+    # Set path to data - if running in linux it is 
+    # recommended that the data is in a mounted file system
+
     show_plot(colormap='jet')

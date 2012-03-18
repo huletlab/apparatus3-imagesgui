@@ -22,16 +22,17 @@ atomcool_lab_path=''
     
 def load(dir, shot):
     imgpath = atomcool_lab_path+dir+'column_'+shot+'.ascii'
+    print "\n******************"
+    print "    Inside load function: %s", imgpath
     a = numpy.loadtxt(imgpath)
     return a
     
-
-    
-
 def load_fits(dir,shot,type):
     fitspath = atomcool_lab_path+dir+shot+type+'.fits'
     hdulist = pyfits.open(fitspath)
     #print hdulist[0].data[0]
+    print "\n******************"
+    print "    Inside load_fits function: %s", fitspath
     return hdulist[0].data[0]
 
 def load_fits_file(path):
