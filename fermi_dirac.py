@@ -3,7 +3,7 @@ from ctypes import *
 import math
 
 
-if os.getenv('COMPUTERNAME') == 'APP3-ANALYSIS':
+if os.getenv('COMPUTERNAME') == 'COLOSSUS':
     gsldll = cdll.LoadLibrary('C:/Program Files (x86)/GnuWin32/bin/libgsl.dll')
 else:
     gsldll = cdll.LoadLibrary('C:/Program Files/GnuWin32/bin/libgsl.dll')
@@ -19,13 +19,15 @@ def fq(x):
     return ( 1 + math.exp(x))/ math.exp(x) * math.log( 1+ math.exp(x))
 
 def fm1(x):
-    #print "Evaluating fm1(%.5f)" % x
-    print gsldll.gsl_sf_fermi_dirac_m1( c_double(x))
-    if x<-80.:
-        return 0.0
-    else:
+    try:
+        #print "Evaluating fm1(%.5f)" % x
+        print gsldll.gsl_sf_fermi_dirac_m1( c_double(x))
+        if x<-80.:
+            return 0.0
+        else:
+            return gsldll.gsl_sf_fermi_dirac_1( c_double(x))
+    except:
         return gsldll.gsl_sf_fermi_dirac_1( c_double(x))
-
 def f0(x):
     if x<-80.:
         return 0.0
