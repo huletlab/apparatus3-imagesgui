@@ -9,18 +9,23 @@ import numpy
 from matplotlib.pylab import *
 
 
-# Check the OS and give correct path dependency
-if os.name == "posix":
-    #print os.getenv('COMPUTERNAME')
-    #Change this to the mount point for atomcool/lab. When using Linux.
-    atomcool_lab_path = '/home/ernie/atomcool_lab/'
-else:
-    #Change this to the map drive for atomcool/lab. When using Windows.
-    atomcool_lab_path = 'L:/'
+#~ # Check the OS and give correct path dependency
+#~ if os.name == "posix":
+    #~ #print os.getenv('COMPUTERNAME')
+    #~ #Change this to the mount point for atomcool/lab. When using Linux.
+    #~ atomcool_lab_path = '/home/ernie/atomcool_lab/'
+#~ else:
+    #~ #Change this to the map drive for atomcool/lab. When using Windows.
+    #~ atomcool_lab_path = 'L:/'
     
-def load(dir,shot):
+atomcool_lab_path=''
+    
+def load(dir, shot):
     imgpath = atomcool_lab_path+dir+'column_'+shot+'.ascii'
-    return numpy.loadtxt(imgpath)
+    a = numpy.loadtxt(imgpath)
+    return a
+    
+
     
 
 def load_fits(dir,shot,type):
