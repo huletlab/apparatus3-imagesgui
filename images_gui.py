@@ -1,4 +1,10 @@
-
+# --- TO DO LIST:
+# - Make center region tabbed and put different plots in different tabs 
+#    --> Azimutha average data and results
+#    --> 1D fits to integrated axial and radial distribution
+# - Define analysis group that shows results of analysis
+# - Implement real time analysis of the 1D cuts
+# - Cross hair should only change on click 
 
 # Standard library imports
 from optparse import OptionParser
@@ -21,64 +27,143 @@ from chaco.api import ArrayDataSource, ArrayPlotData, ColorBar, ContourLinePlot,
                                  HPlotContainer, ImageData, LinearMapper, \
                                  LinePlot, OverlayPlotContainer, Plot, PlotAxis
 from chaco.default_colormaps import *
-from enthought.traits.ui.editors import FileEditor
+from enthought.traits.ui.editors import FileEditor, DirectoryEditor
 from enable.component_editor import ComponentEditor
 from chaco.tools.api import LineInspector, PanTool, RangeSelection, \
                                    RangeSelectionOverlay, ZoomTool
-from enable.api import Window
+from enable.api import Window, NativeScrollBar
 from traits.api import Any, Array, Callable, CFloat, CInt, Enum, Event, Float, HasTraits, \
-                             Int, Instance, Str, Trait, on_trait_change, File, Password
-from traitsui.api import Group, Handler, HGroup, Item, View, HSplit, VSplit
+                             Int, Instance, Str, Trait, on_trait_change, File, Password, \
+                             Bool, Directory, List, Property
+from traitsui.api import Group, Handler, HGroup, Item, View, HSplit, VSplit, ListStrEditor, TabularEditor
 from traitsui.menu import Action, CloseAction, Menu, \
                                      MenuBar, NoButtons, Separator
+from traitsui.tabular_adapter import TabularAdapter
+
+import import_data
 
 
-from import_data import load, load_fits
     
+#-------------------------------------------------------------------------------
+#  Function to filter column density file names
+#-------------------------------------------------------------------------------
+import re #regular expressions module
+def iscol(x):
+        #return re.search("\wcolumn\w.ascii", x)
+        return re.search(r'column',x) and re.search(r'ascii',x)
+
 
 #-------------------------------------------------------------------------------
-#  GetPassword Class
+#  Class to display list of available shots on the left pane
+#-------------------------------------------------------------------------------
+class SelectAdapter(TabularAdapter):
+	""" This adapter class was borrowed from one of the traitsui examples
+	"""
+	# Titles and column names for each column of a table.
+	# In this example, each table has only one column.
+	columns = [ ('', 'myvalue') ]
+	# Magically named trait which gives the display text of the column named 
+	# 'myvalue'. This is done using a Traits Property and its getter:
+	myvalue_text = Property
+
+	# The getter for Property 'myvalue_text' simply takes the value of the 
+	# corresponding item in the list being displayed in this table.
+	# A more complicated example could format the item before displaying it.
+	def _get_myvalue_text(self):
+		return self.item
+
+
+
+#-------------------------------------------------------------------------------
+#  Remote fitting routine class
 #-------------------------------------------------------------------------------
 
-class GetPassword ( HasTraits ): 
-    """ This class prompts the user for login and password
+class RemoteFits ( HasTraits ): 
+    """ This class determines whether the fits will be done locally or whether
+    they will be done remotely via ssh.  If they are done via ssh it prompts
+    the user for login and password
     """
-    # Define a trait for user_name and password
-    user_name     = Str( "" ) 
-    password         = Password
-    # TextEditor display with secret typing capability (for Password traits):
-    text_pass_group = Group( Group( Item('user_name', resizable=True),
-                                           style='simple', 
-                                           show_border=False), 
-                                    Group(Item('password', resizable=True),
-                                          style='custom', 
-                                          show_border=False))
-    # The view 
-    view1 = View(text_pass_group, 
-                 title = 'Password',
-                 buttons = ['OK'])
+    # Define traits
+    remote    = Bool
+    user_name = Str( "" ) 
+    password  = Password
+    # Define the group in which they will be displayed
+    remote_group = Group(
+                             Item('remote', resizable=True),   
+                             Item('user_name', resizable=True),
+                             Item('password', resizable=True),
+                           )
+    # Define the view
+    view1 = View(remote_group, 
+                 title = 'Set up fitting routine',
+                 buttons = ['OK'],
+                 width=300)
+
     def uname(self):
-	    return self.user_name
+            return self.user_name
     def pwd(self):
-	    return self.password
-	
+            return self.password
+        
+#-------------------------------------------------------------------------------
+#  ImageGUI class 
+#-------------------------------------------------------------------------------
 
 class ImageGUI(HasTraits):
     
     # TO FIX : put here the last available shot
     #shot = File('L:\\data\\app3\\2011\\1108\\110823\\column_5200.ascii')
-    shot = File('/home/pmd/atomcool/lab/data/app3/2012/1203/120307/column_3195.ascii')
+    #shot = File('/home/pmd/atomcool/lab/data/app3/2012/1203/120307/column_3195.ascii')
+
+    #-- Shot traits
+    shotdir = Directory('/home/pmd/atomcool/lab/data/app3/2012/1203/120307/')
+    shots = List(Str)
+    selectedshot = List(Str)
+
+    #-- Report trait
+    report = Str
+
+    #-- Displayed analysis results
+    number = Float
+
     
     #---------------------------------------------------------------------------
     # Traits View Definitions
     #---------------------------------------------------------------------------
     
     traits_view = View(
-                    HSplit(
-                        Item('shot',style='custom',editor=FileEditor(filter=['column_*.ascii']),show_label=False, resizable=True, width=400),
-                        Item('container', editor=ComponentEditor(), show_label=False, width=800, height=800)),
-                        width=1200, height=800, resizable=True, title="APPARATUS 3 :: Analyze Images")
-                        
+                    Group(
+                      #Directory
+                      Item( 'shotdir',style='simple', editor=DirectoryEditor(), width = 400, \
+				      show_label=False, resizable=False ),
+                      #Bottom
+                      HSplit(
+		        #-- Pane for shot selection
+        	        Group(
+                          Item( 'shots',show_label=False, width=180, \
+					editor = TabularEditor(selected='selectedshot',\
+					editable=False,multi_select=True,\
+					adapter=SelectAdapter()) ),
+			  Item('report',show_label=False, width=180, \
+					springy=True, style='custom' ),
+                          orientation='vertical',
+		          layout='normal', ),
+
+		        #-- Pane for column density plots
+                        Item('container',editor=ComponentEditor(), \
+                                         show_label=False, width=600, height=600, \
+                                         resizable=True ), 
+
+			#-- Pane for analysis results
+			Group(
+		          Item('number',show_label=False)
+			  )
+                      ),
+                      orientation='vertical',
+                      layout='normal',
+                    ),
+                  width=1400, height=600, resizable=True)
+    
+    #-- Pop-up view when Plot->Edit is selcted from the menu
     plot_edit_view = View(
                     Group(Item('num_levels'),
                           Item('colormap')),
@@ -91,9 +176,13 @@ class ImageGUI(HasTraits):
     # Private Traits
     #---------------------------------------------------------------------------
 
-    _image_index = Instance(GridDataSource)
+    #-- Represents the region where the data set is defined
+    _image_index = Instance(GridDataSource) 
+
+    #-- Represents the data that will be plotted on the grid
     _image_value = Instance(ImageData)
 
+    #-- Represents the color map that will be used
     _cmap = Trait(jet, Callable)
     
     
@@ -102,14 +191,20 @@ class ImageGUI(HasTraits):
     #---------------------------------------------------------------------------
 
     def __init__(self, *args, **kwargs):
+	#-- super is used to run the inherited __init__ method
+	#-- this ensures that all the Traits machinery is properly setup
+	#-- even though the __init__ method is overridden
         super(ImageGUI, self).__init__(*args, **kwargs)
+
+	#-- after running the inherited __init__, a plot is created
         self.create_plot()
 
 
 
     def create_plot(self):
 
-        # Create the mapper, etc
+        #-- Create the index for the x an y axes and the range over
+	#-- which they vary
         self._image_index = GridDataSource(array([]),
                                           array([]),
                                           sort_order=("ascending","ascending"))
@@ -118,15 +213,17 @@ class ImageGUI(HasTraits):
         self._image_index.on_trait_change(self._metadata_changed,
                                           "metadata_changed")
 
+
+	#-- Create the image values and determine their range
         self._image_value = ImageData(data=array([]), value_depth=1)
         image_value_range = DataRange1D(self._image_value)
 
         
         # Create the image plot
-        self.imgplot = CMapImagePlot(index=self._image_index,
-                                 value=self._image_value,
-                                 index_mapper=GridMapper(range=image_index_range),
-                                 color_mapper=self._cmap(image_value_range),)
+        self.imgplot = CMapImagePlot( index=self._image_index,
+                                      value=self._image_value,
+                                      index_mapper=GridMapper(range=image_index_range),
+                                      color_mapper=self._cmap(image_value_range),)
                                  
 
         # Create the contour plots
@@ -161,8 +258,8 @@ class ImageGUI(HasTraits):
 
 
         # Add some tools to the plot
-        #~ self.polyplot.tools.append(PanTool(self.polyplot,
-                                           #~ constrain_key="shift"))
+        self.imgplot.tools.append(PanTool(self.imgplot,
+                                            constrain_key="shift"))
         self.imgplot.overlays.append(ZoomTool(component=self.imgplot,
                                             tool_mode="box", always_on=False))
         self.imgplot.overlays.append(LineInspector(component=self.imgplot,
@@ -178,7 +275,7 @@ class ImageGUI(HasTraits):
                                                color="white",
                                                is_listener=False))
 
-        # Add these two plots to one container
+        # Add the plot (or plots) to a container
         contour_container = OverlayPlotContainer(padding=20,
                                                  use_backbuffer=True,
                                                  unified_draw=True)
@@ -215,7 +312,7 @@ class ImageGUI(HasTraits):
                              name="dot",
                              color_mapper=self._cmap(image_value_range),
                              marker="circle",
-                             marker_size=8)
+                             marker_size=6)
 
         self.cross_plot.index_range = self.imgplot.index_range.x_range
 
@@ -248,9 +345,25 @@ class ImageGUI(HasTraits):
         self.container.add(inner_cont)
         self.container.add(self.cross_plot2)
 
+	self.hscrollbar = NativeScrollBar(orientation = "vertical",
+			                  position=[20,50],
+					  bounds=[100,100],
+					  bgcolor = "red",
+					  color = "white",
+					  hjustify = "center",
+					  vjustify = "center"
+					 )
+
+	self.container.add( self.hscrollbar )
+
+	 
+        # print dir(self.container)
+
 
     def update(self):
-        imgdata = self.load_imagedata()
+        self.shots = self.populate_shot_list()
+	print self.selectedshot    
+        imgdata, self.report = self.load_imagedata()
         if imgdata is not None:
             self.minz = imgdata.min()
             self.maxz = imgdata.max()
@@ -258,43 +371,57 @@ class ImageGUI(HasTraits):
             self.colorbar.index_mapper.range.high = self.maxz
             xs=numpy.linspace(0,imgdata.shape[0],imgdata.shape[0]+1)
             ys=numpy.linspace(0,imgdata.shape[1],imgdata.shape[1]+1)
-            print xs
-            print ys
+            #print xs
+            #print ys
             self._image_index.set_data(xs,ys)
             self._image_value.data = imgdata
             self.pd.set_data("line_index", xs)
             self.pd.set_data("line_index2",ys)
             self.container.invalidate_draw()
             self.container.request_redraw()                        
-        
+
+    def populate_shot_list(self):
+        try:
+            shot_list = os.listdir(self.shotdir)
+            shot_list = filter( iscol, shot_list)
+	    shot_list = sorted(shot_list)
+        except ValueError:
+            print " *** Not a valid directory path ***"
+        return shot_list
+
     def load_imagedata(self):
         try:
-            dir = self.shot[:self.shot.rindex('/')+1]
-            shotnum = self.shot[self.shot.rindex('_')+1:self.shot.rindex('.ascii')]
+            directory = self.shotdir
+	    if self.selectedshot == []:
+		    filename = self.shots[0]
+	    else:
+		    filename = self.selectedshot[0]
+            shotnum = filename[filename.rindex('_')+1:filename.rindex('.ascii')]
         except ValueError:
             print " *** Not a valid column density path *** " 
             return None
         # Set data path
         # Prepare PlotData object
-        print dir
-        print shotnum
-        return load(dir,shotnum)
+	print "Loading shot #%s from %s" % (shotnum,directory)
+        return import_data.load(directory,shotnum), import_data.load_report(directory,shotnum)
 
 
     #---------------------------------------------------------------------------
     # Event handlers
     #---------------------------------------------------------------------------
     
-
-
-    def _shot_changed(self):
+    def _selectedshot_changed(self):
+	print self.selectedshot
         self.update()
+
+    def _shots_changed(self):
+        self.shots = self.populate_shot_list()
+	return
 
     def _metadata_changed(self, old, new):
         """ This function takes out a cross section from the image data, based
         on the line inspector selections, and updates the line and scatter
         plots."""
-
         self.cross_plot.value_range.low = self.minz
         self.cross_plot.value_range.high = self.maxz
         self.cross_plot2.value_range.low = self.minz
@@ -404,7 +531,7 @@ class ModelView(HasTraits):
                                             CloseAction,
                                             name="File")),
                        handler = Controller,
-                       title = "Function Inspector",
+		       title = "APPARATUS3 :: Analyze shots",
                        resizable=True)
 
     @on_trait_change('model, view')
@@ -432,7 +559,7 @@ def show_plot(**kwargs):
 
 if __name__ == '__main__':
     # Setup ssh access to be able to perform fitting routines
-    demo =  GetPassword()
+    demo =  RemoteFits()
     demo.configure_traits()
     
     print demo.uname()
