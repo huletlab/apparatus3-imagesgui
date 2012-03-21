@@ -20,8 +20,8 @@ from matplotlib.pylab import *
     
 atomcool_lab_path=''
     
-def load(directory, shot):
-    imgpath = atomcool_lab_path+directory+'column_'+shot+'.ascii'
+def load(directory, filename):
+    imgpath = atomcool_lab_path+directory+filename
     #print "\n******************"
     #print "    Inside load function: %s", imgpath
     a = numpy.loadtxt(imgpath)
