@@ -1,4 +1,10 @@
-
+# --- TO DO LIST:
+# - Make center region tabbed and put different plots in different tabs 
+#    --> Azimutha average data and results
+#    --> 1D fits to integrated axial and radial distribution
+# - Define analysis group that shows results of analysis
+# - Implement real time analysis of the 1D cuts
+# - Cross hair should only change on click 
 
 # Standard library imports
 from optparse import OptionParser
@@ -21,52 +27,194 @@ from chaco.api import ArrayDataSource, ArrayPlotData, ColorBar, ContourLinePlot,
                                  HPlotContainer, ImageData, LinearMapper, \
                                  LinePlot, OverlayPlotContainer, Plot, PlotAxis
 from chaco.default_colormaps import *
-from enthought.traits.ui.editors import FileEditor
+from enthought.traits.ui.editors import FileEditor, DirectoryEditor
 from enable.component_editor import ComponentEditor
+from chaco.tools.cursor_tool import CursorTool, BaseCursorTool
 from chaco.tools.api import LineInspector, PanTool, RangeSelection, \
                                    RangeSelectionOverlay, ZoomTool
-from enable.api import Window
+from enable.api import Window, NativeScrollBar
 from traits.api import Any, Array, Callable, CFloat, CInt, Enum, Event, Float, HasTraits, \
-                             Int, Instance, Str, Trait, on_trait_change, File
-from traitsui.api import Group, Handler, HGroup, Item, View, HSplit, VSplit
+                             Int, Instance, Str, Trait, on_trait_change, File, Password, \
+                             Bool, Directory, List, Property, DelegatesTo
+from traitsui.api import Group, Handler, HGroup, Item, View, HSplit, VSplit, ListStrEditor, TabularEditor
 from traitsui.menu import Action, CloseAction, Menu, \
                                      MenuBar, NoButtons, Separator
+from traitsui.tabular_adapter import TabularAdapter
+
+import import_data
 
 
-from import_data import load, load_fits
     
+#-------------------------------------------------------------------------------
+#  Function to filter column density file names
+#-------------------------------------------------------------------------------
+import re #regular expressions module
+def iscol(x, namefilter):
+        #return re.search("\wcolumn\w.ascii", x)
+        return re.search(namefilter,x) and re.search(r'ascii',x)
 
+
+#-------------------------------------------------------------------------------
+#  Class to display list of available shots on the left pane
+#-------------------------------------------------------------------------------
+class SelectAdapter(TabularAdapter):
+	""" This adapter class was borrowed from one of the traitsui examples
+	"""
+	# Titles and column names for each column of a table.
+	# In this example, each table has only one column.
+	columns = [ ('', 'myvalue') ]
+	# Magically named trait which gives the display text of the column named 
+	# 'myvalue'. This is done using a Traits Property and its getter:
+	myvalue_text = Property
+
+	# The getter for Property 'myvalue_text' simply takes the value of the 
+	# corresponding item in the list being displayed in this table.
+	# A more complicated example could format the item before displaying it.
+	def _get_myvalue_text(self):
+		return self.item
+
+
+
+#-------------------------------------------------------------------------------
+#  Remote fitting routine class
+#-------------------------------------------------------------------------------
+
+class RemoteFits ( HasTraits ): 
+    """ This class determines whether the fits will be done locally or whether
+    they will be done remotely via ssh.  If they are done via ssh it prompts
+    the user for login and password
+    """
+    # Define traits
+    remote    = Bool
+    user_name = Str( "" ) 
+    password  = Password
+    # Define the group in which they will be displayed
+    remote_group = Group(
+                             Item('remote', resizable=True),   
+                             Item('user_name', resizable=True),
+                             Item('password', resizable=True),
+                           )
+    # Define the view
+    view1 = View(remote_group, 
+                 title = 'Set up fitting routine',
+                 buttons = ['OK'],
+                 width=300)
+
+    def uname(self):
+            return self.user_name
+    def pwd(self):
+            return self.password
+        
+#-------------------------------------------------------------------------------
+#  ImageGUI class 
+#-------------------------------------------------------------------------------
 
 class ImageGUI(HasTraits):
     
     # TO FIX : put here the last available shot
-    shot = File('L:\\data\\app3\\2011\\1108\\110823\\column_5200.ascii')
+    #shot = File('L:\\data\\app3\\2011\\1108\\110823\\column_5200.ascii')
+    #shot = File('/home/pmd/atomcool/lab/data/app3/2012/1203/120307/column_3195.ascii')
+
+    #-- Shot traits
+    shotdir = Directory('/home/pmd/atomcool/lab/data/app3/2012/1203/120320/')
+    shots = List(Str)
+    selectedshot = List(Str)
+    namefilter = Str('column')
+
+    #-- Report trait
+    report = Str
+
+    #-- Displayed analysis results
+    number = Float
+     
+    #-- Column density plot container
+    column_density = Instance(HPlotContainer)
+    #---- Plot components within this container
+    imgplot     = Instance(CMapImagePlot)
+    cross_plot  = Instance(Plot)
+    cross_plot2 = Instance(Plot)
+    colorbar    = Instance(ColorBar)
+    #---- Plot data
+    pd = Instance(ArrayPlotData)
+    #---- Colorbar 
+    num_levels = Int(15)
+    colormap = Enum(color_map_name_dict.keys())
+
+    #-- Crosshair location
+    cursor = Instance(BaseCursorTool)
+    xy = DelegatesTo('cursor', prefix='current_position')
+    xpos = Float(0.)
+    ypos = Float(0.)
+    xpos_read = Float(0.)
+    ypos_read = Float(0.)
+    cursor_group = Group( Group(Item('xpos', show_label=True), 
+	                        Item('xpos_read', show_label=False, style="readonly"),
+				orientation='horizontal'),
+			  Group(Item('ypos', show_label=True), 
+				Item('ypos_read', show_label=False, style="readonly"),
+				orientation='horizontal'),
+		          orientation='vertical', layout='normal',springy=True)
+
     
     #---------------------------------------------------------------------------
     # Traits View Definitions
     #---------------------------------------------------------------------------
     
     traits_view = View(
-                    HSplit(
-                        Item('shot',style='custom',editor=FileEditor(filter=['column_*.ascii']),show_label=False, resizable=True, width=400),
-                        Item('container', editor=ComponentEditor(), show_label=False, width=800, height=800)),
-                        width=1200, height=800, resizable=True, title="APPARATUS 3 :: Analyze Images")
-                        
+                    Group(
+                      #Directory
+                      Item( 'shotdir',style='simple', editor=DirectoryEditor(), width = 400, \
+				      show_label=False, resizable=False ),
+                      #Bottom
+                      HSplit(
+		        #-- Pane for shot selection
+        	        Group(
+		          Item( 'namefilter', show_label=False,springy=False),		
+                          Item( 'shots',show_label=False, width=180, height= 360, \
+					editor = TabularEditor(selected='selectedshot',\
+					editable=False,multi_select=True,\
+					adapter=SelectAdapter()) ),
+			  cursor_group,
+                          orientation='vertical',
+		          layout='normal', ),
+
+		        #-- Pane for column density plots
+			Group(
+			  Item('column_density',editor=ComponentEditor(), \
+                                           show_label=False, width=600, height=500, \
+                                           resizable=True ), 
+			  Item('report',show_label=False, width=180, \
+					springy=True, style='custom' ),
+			  layout='tabbed', springy=True),
+
+			#-- Pane for analysis results
+			Group(
+		          Item('number',show_label=False)
+			  )
+                      ),
+                      orientation='vertical',
+                      layout='normal',
+                    ),
+                  width=1400, height=500, resizable=True)
+    
+    #-- Pop-up view when Plot->Edit is selcted from the menu
     plot_edit_view = View(
                     Group(Item('num_levels'),
                           Item('colormap')),
                           buttons=["OK","Cancel"])
                           
-    num_levels = Int(15)
-    colormap = Enum(color_map_name_dict.keys())
     
     #---------------------------------------------------------------------------
     # Private Traits
     #---------------------------------------------------------------------------
 
-    _image_index = Instance(GridDataSource)
+    #-- Represents the region where the data set is defined
+    _image_index = Instance(GridDataSource) 
+
+    #-- Represents the data that will be plotted on the grid
     _image_value = Instance(ImageData)
 
+    #-- Represents the color map that will be used
     _cmap = Trait(jet, Callable)
     
     
@@ -75,48 +223,39 @@ class ImageGUI(HasTraits):
     #---------------------------------------------------------------------------
 
     def __init__(self, *args, **kwargs):
+	#-- super is used to run the inherited __init__ method
+	#-- this ensures that all the Traits machinery is properly setup
+	#-- even though the __init__ method is overridden
         super(ImageGUI, self).__init__(*args, **kwargs)
+
+	#-- after running the inherited __init__, a plot is created
         self.create_plot()
 
 
 
     def create_plot(self):
 
-        # Create the mapper, etc
-        self._image_index = GridDataSource(array([]),
-                                          array([]),
+        #-- Create the index for the x an y axes and the range over
+	#-- which they vary
+        self._image_index = GridDataSource(array([]), array([]),
                                           sort_order=("ascending","ascending"))
         image_index_range = DataRange2D(self._image_index)
         
+	#-- I believe this is what allows tracking the mouse
         self._image_index.on_trait_change(self._metadata_changed,
                                           "metadata_changed")
 
+
+	#-- Create the image values and determine their range
         self._image_value = ImageData(data=array([]), value_depth=1)
         image_value_range = DataRange1D(self._image_value)
-
         
         # Create the image plot
-        self.imgplot = CMapImagePlot(index=self._image_index,
-                                 value=self._image_value,
-                                 index_mapper=GridMapper(range=image_index_range),
-                                 color_mapper=self._cmap(image_value_range),)
+        self.imgplot = CMapImagePlot( index=self._image_index,
+                                      value=self._image_value,
+                                      index_mapper=GridMapper(range=image_index_range),
+                                      color_mapper=self._cmap(image_value_range),)
                                  
-
-        # Create the contour plots
-        #~ self.polyplot = ContourPolyPlot(index=self._image_index,
-                                        #~ value=self._image_value,
-                                        #~ index_mapper=GridMapper(range=
-                                            #~ image_index_range),
-                                        #~ color_mapper=\
-                                            #~ self._cmap(image_value_range),
-                                        #~ levels=self.num_levels)
-
-        #~ self.lineplot = ContourLinePlot(index=self._image_index,
-                                        #~ value=self._image_value,
-                                        #~ index_mapper=GridMapper(range=
-                                            #~ self.polyplot.index_mapper.range),
-                                        #~ levels=self.num_levels)
-
 
         # Add a left axis to the plot
         left = PlotAxis(orientation='left',
@@ -134,31 +273,11 @@ class ImageGUI(HasTraits):
 
 
         # Add some tools to the plot
-        #~ self.polyplot.tools.append(PanTool(self.polyplot,
-                                           #~ constrain_key="shift"))
+        self.imgplot.tools.append(PanTool(self.imgplot,drag_button="right",
+                                            constrain_key="shift"))
+
         self.imgplot.overlays.append(ZoomTool(component=self.imgplot,
                                             tool_mode="box", always_on=False))
-        self.imgplot.overlays.append(LineInspector(component=self.imgplot,
-                                               axis='index_x',
-                                               inspect_mode="indexed",
-                                               write_metadata=True,
-                                               is_listener=False,
-                                               color="white"))
-        self.imgplot.overlays.append(LineInspector(component=self.imgplot,
-                                               axis='index_y',
-                                               inspect_mode="indexed",
-                                               write_metadata=True,
-                                               color="white",
-                                               is_listener=False))
-
-        # Add these two plots to one container
-        contour_container = OverlayPlotContainer(padding=20,
-                                                 use_backbuffer=True,
-                                                 unified_draw=True)
-        contour_container.add(self.imgplot)
-        #~ contour_container.add(self.polyplot)
-        #~ contour_container.add(self.lineplot)
-
 
         # Create a colorbar
         cbar_index_mapper = LinearMapper(range=image_value_range)
@@ -169,7 +288,12 @@ class ImageGUI(HasTraits):
                                  padding_right=40,
                                  resizable='v',
                                  width=30)
-                                 
+
+
+	# Add a cursor 
+	self.cursor = CursorTool( self.imgplot, drag_button="left", color="white")
+	# the cursor is a rendered component so it goes in the overlays list
+	self.imgplot.overlays.append(self.cursor)
                         
         # Create the two cross plots
         self.pd = ArrayPlotData(line_index = array([]),
@@ -188,7 +312,7 @@ class ImageGUI(HasTraits):
                              name="dot",
                              color_mapper=self._cmap(image_value_range),
                              marker="circle",
-                             marker_size=8)
+                             marker_size=6)
 
         self.cross_plot.index_range = self.imgplot.index_range.x_range
 
@@ -211,19 +335,23 @@ class ImageGUI(HasTraits):
         self.cross_plot2.index_range = self.imgplot.index_range.y_range
 
 
-        # Create a container and add components
-        self.container = HPlotContainer(padding=40, fill_padding=True,
+        # Create a container and add sub-containers and components
+        self.column_density = HPlotContainer(padding=40, fill_padding=True,
                                         bgcolor = "white", use_backbuffer=False)
         inner_cont = VPlotContainer(padding=0, use_backbuffer=True)
         inner_cont.add(self.cross_plot)
-        inner_cont.add(contour_container)
-        self.container.add(self.colorbar)
-        self.container.add(inner_cont)
-        self.container.add(self.cross_plot2)
-
+	self.imgplot.padding =20
+	inner_cont.add(self.imgplot)
+        self.column_density.add(self.colorbar)
+        self.column_density.add(inner_cont)
+        self.column_density.add(self.cross_plot2)
 
     def update(self):
-        imgdata = self.load_imagedata()
+	#print self.cursor.current_index
+	#self.cursor.current_position = 100.,100.
+        self.shots = self.populate_shot_list()
+	print self.selectedshot    
+        imgdata, self.report = self.load_imagedata()
         if imgdata is not None:
             self.minz = imgdata.min()
             self.maxz = imgdata.max()
@@ -231,58 +359,90 @@ class ImageGUI(HasTraits):
             self.colorbar.index_mapper.range.high = self.maxz
             xs=numpy.linspace(0,imgdata.shape[0],imgdata.shape[0]+1)
             ys=numpy.linspace(0,imgdata.shape[1],imgdata.shape[1]+1)
-            print xs
-            print ys
+            #print xs
+            #print ys
             self._image_index.set_data(xs,ys)
             self._image_value.data = imgdata
             self.pd.set_data("line_index", xs)
             self.pd.set_data("line_index2",ys)
-            self.container.invalidate_draw()
-            self.container.request_redraw()                        
-        
+            self.column_density.invalidate_draw()
+            self.column_density.request_redraw()                        
+
+    def populate_shot_list(self):
+        try:
+            shot_list = os.listdir(self.shotdir)
+	    fun = lambda x: iscol(x,self.namefilter)
+            shot_list = filter( fun, shot_list)
+	    shot_list = sorted(shot_list)
+        except ValueError:
+            print " *** Not a valid directory path ***"
+        return shot_list
+
     def load_imagedata(self):
         try:
-            dir = self.shot[self.shot.index(':\\')+2:self.shot.rindex('\\')+1]
-            shotnum = self.shot[self.shot.rindex('_')+1:self.shot.rindex('.ascii')]
+            directory = self.shotdir
+	    if self.selectedshot == []:
+		    filename = self.shots[0]
+	    else:
+		    filename = self.selectedshot[0]
+            #shotnum = filename[filename.rindex('_')+1:filename.rindex('.ascii')]
+	    shotnum = filename[:filename.index('_')]
         except ValueError:
-            print " *** Not a valid column density path *** " 
+            print " *** Not a valid path *** " 
             return None
         # Set data path
         # Prepare PlotData object
-        print dir
-        print shotnum
-        return load(dir,shotnum)
+	print "Loading file #%s from %s" % (filename,directory)
+        return import_data.load(directory,filename), import_data.load_report(directory,shotnum)
 
 
     #---------------------------------------------------------------------------
     # Event handlers
     #---------------------------------------------------------------------------
     
-
-
-    def _shot_changed(self):
+    def _selectedshot_changed(self):
+	print self.selectedshot
         self.update()
 
-    def _metadata_changed(self, old, new):
-        """ This function takes out a cross section from the image data, based
-        on the line inspector selections, and updates the line and scatter
-        plots."""
+    def _shots_changed(self):
+        self.shots = self.populate_shot_list()
+	return
 
+    def _namefilter_changed(self):
+	self.shots = self.populate_shot_list()
+	return
+
+  
+    def _xpos_changed(self):
+	self.cursor.current_position = self.xpos, self.ypos
+    def _ypos_changed(self):
+	self.cursor.current_position = self.xpos, self.ypos
+
+    def _metadata_changed(self):
+	self._xy_changed()
+	    
+    def _xy_changed(self):
+	self.xpos_read = self.cursor.current_index[0]
+	self.ypos_read = self.cursor.current_index[1]
+	#print self.cursor.current_index
+        """ This function takes out a cross section from the image data, based
+        on the cursor selections, and updates the line and scatter
+        plots."""
         self.cross_plot.value_range.low = self.minz
         self.cross_plot.value_range.high = self.maxz
         self.cross_plot2.value_range.low = self.minz
         self.cross_plot2.value_range.high = self.maxz
-        if self._image_index.metadata.has_key("selections"):
-            x_ndx, y_ndx = self._image_index.metadata["selections"]
+        if True:
+            x_ndx, y_ndx = self.cursor.current_index
             if y_ndx and x_ndx:
                 self.pd.set_data("line_value",
-                                 self._image_value.data[y_ndx,:])
+				self._image_value.data[:,y_ndx])
                 self.pd.set_data("line_value2",
-                                 self._image_value.data[:,x_ndx])
+				self._image_value.data[x_ndx,:])
                 xdata, ydata = self._image_index.get_data()
                 xdata, ydata = xdata.get_data(), ydata.get_data()
-                self.pd.set_data("scatter_index", array([xdata[x_ndx]]))
-                self.pd.set_data("scatter_index2", array([ydata[y_ndx]]))
+                self.pd.set_data("scatter_index", array([ydata[y_ndx]]))
+                self.pd.set_data("scatter_index2", array([xdata[x_ndx]]))
                 self.pd.set_data("scatter_value",
                     array([self._image_value.data[y_ndx, x_ndx]]))
                 self.pd.set_data("scatter_value2",
@@ -308,7 +468,7 @@ class ImageGUI(HasTraits):
             # the shared colormap in plot object
             self.cross_plot.plots["dot"][0].color_mapper = self._cmap(value_range)
             self.cross_plot2.plots["dot"][0].color_mapper = self._cmap(value_range)
-            self.container.request_redraw()
+            self.column_density.request_redraw()
 
     def _num_levels_changed(self):
         if self.num_levels > 3:
@@ -377,7 +537,7 @@ class ModelView(HasTraits):
                                             CloseAction,
                                             name="File")),
                        handler = Controller,
-                       title = "Function Inspector",
+		       title = "APPARATUS3 :: Analyze shots",
                        resizable=True)
 
     @on_trait_change('model, view')
@@ -402,6 +562,16 @@ def show_plot(**kwargs):
     modelview.configure_traits()
 
 
+
 if __name__ == '__main__':
-    #demo.configure_traits()
+    # Setup ssh access to be able to perform fitting routines
+    demo =  RemoteFits()
+    demo.configure_traits()
+    
+    print demo.uname()
+    print demo.pwd()
+
+    # Set path to data - if running in linux it is 
+    # recommended that the data is in a mounted file system
+
     show_plot(colormap='jet')

@@ -20,18 +20,26 @@ from matplotlib.pylab import *
     
 atomcool_lab_path=''
     
-def load(dir, shot):
-    imgpath = atomcool_lab_path+dir+'column_'+shot+'.ascii'
+def load(directory, filename):
+    imgpath = atomcool_lab_path+directory+filename
+    #print "\n******************"
+    #print "    Inside load function: %s", imgpath
     a = numpy.loadtxt(imgpath)
     return a
-    
 
+def load_report(directory, shot):
+    reportpath = atomcool_lab_path+directory+'report'+shot+'.INI'
+    f = open(reportpath,'r')
+    string = f.read()
+    f.close()
+    return string
     
-
 def load_fits(dir,shot,type):
     fitspath = atomcool_lab_path+dir+shot+type+'.fits'
     hdulist = pyfits.open(fitspath)
     #print hdulist[0].data[0]
+    #print "\n******************"
+    #print "    Inside load_fits function: %s", fitspath
     return hdulist[0].data[0]
 
 def load_fits_file(path):
