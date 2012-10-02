@@ -1,5 +1,5 @@
-from enthought.traits.api import HasTraits, Str, Int, Password
-from enthought.traits.ui.api import Item, Group, View
+from traits.api import HasTraits, Str, Int, Password
+from traitsui.api import Item, Group, View
 
 #-------------------------------------------------------------------------------
 #  GetPassword Class

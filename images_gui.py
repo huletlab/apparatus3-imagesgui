@@ -21,7 +21,7 @@ from chaco.api import ArrayDataSource, ArrayPlotData, ColorBar, ContourLinePlot,
                                  HPlotContainer, ImageData, LinearMapper, \
                                  LinePlot, OverlayPlotContainer, Plot, PlotAxis
 from chaco.default_colormaps import *
-from enthought.traits.ui.editors import FileEditor
+from traitsui.editors import FileEditor
 from enable.component_editor import ComponentEditor
 from chaco.tools.api import LineInspector, PanTool, RangeSelection, \
                                    RangeSelectionOverlay, ZoomTool
@@ -48,7 +48,7 @@ class ImageGUI(HasTraits):
     
     traits_view = View(
                     HSplit(
-                        Item('shot',style='custom',editor=FileEditor(filter=['column_*.ascii']),show_label=False, resizable=True, width=400),
+                        Item('shot',style='custom',editor=FileEditor(filter=['*.ascii']),show_label=False, resizable=True, width=400),
                         Item('container', editor=ComponentEditor(), show_label=False, width=800, height=800)),
                         width=1200, height=800, resizable=True, title="APPARATUS 3 :: Analyze Images")
                         
