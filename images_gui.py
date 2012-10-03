@@ -27,7 +27,7 @@ from chaco.api import ArrayDataSource, ArrayPlotData, ColorBar, ContourLinePlot,
                                  HPlotContainer, ImageData, LinearMapper, \
                                  LinePlot, OverlayPlotContainer, Plot, PlotAxis
 from chaco.default_colormaps import *
-from enthought.traits.ui.editors import FileEditor, DirectoryEditor
+from traitsui.editors import FileEditor, DirectoryEditor
 from enable.component_editor import ComponentEditor
 from chaco.tools.cursor_tool import CursorTool, BaseCursorTool
 from chaco.tools.api import LineInspector, PanTool, RangeSelection, \
