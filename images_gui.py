@@ -10,6 +10,7 @@
 from optparse import OptionParser
 import sys
 import os
+import subprocess
 
 import scipy
 import pyfits
@@ -115,8 +116,13 @@ class ImageGUI(HasTraits):
     #shot = File('L:\\data\\app3\\2011\\1108\\110823\\column_5200.ascii')
     #shot = File('/home/pmd/atomcool/lab/data/app3/2012/1203/120307/column_3195.ascii')
 
+    #-- Get current data directory
+    datadir = subprocess.Popen( 'gotodat', stdout=subprocess.PIPE).communicate()[0].strip()
+    print datadir
+     
     #-- Shot traits
-    shotdir = Directory('/home/pmd/atomcool/lab/data/app3/2012/1203/120320/')
+    #shotdir = Directory('/home/pmd/atomcool/lab/data/app3/2012/1203/120320/')
+    shotdir = Directory(datadir)
     shots = List(Str)
     selectedshot = List(Str)
     namefilter = Str('column')
@@ -565,11 +571,11 @@ def show_plot(**kwargs):
 
 if __name__ == '__main__':
     # Setup ssh access to be able to perform fitting routines
-    demo =  RemoteFits()
-    demo.configure_traits()
+    #demo =  RemoteFits()
+    #demo.configure_traits()
     
-    print demo.uname()
-    print demo.pwd()
+    #print demo.uname()
+    #print demo.pwd()
 
     # Set path to data - if running in linux it is 
     # recommended that the data is in a mounted file system
