@@ -14,6 +14,7 @@ import subprocess
 
 import scipy
 import pyfits
+from scipy.ndimage.interpolation import rotate
 
 # Major library imports
 #from numpy import array, linspace, meshgrid, nanmin, nanmax,  pi, zeros
@@ -34,17 +35,30 @@ from chaco.tools.cursor_tool import CursorTool, BaseCursorTool
 from chaco.tools.api import LineInspector, PanTool, RangeSelection, \
                                    RangeSelectionOverlay, ZoomTool
 from enable.api import Window, NativeScrollBar
+from traits.api import *
+from traitsui.api import View, Item, Group, HGroup, VGroup, HSplit, VSplit,Handler, CheckListEditor, EnumEditor, ListStrEditor,ArrayEditor, spring, ListEditor, ButtonEditor
+from traitsui.menu import NoButtons
+from traitsui.menu import ApplyButton
+from traitsui.file_dialog import save_file,open_file
+from chaco.api import Plot, ArrayPlotData
+from enable.component_editor import ComponentEditor
 from traits.api import Any, Array, Callable, CFloat, CInt, Enum, Event, Float, HasTraits, \
                              Int, Instance, Str, Trait, on_trait_change, File, Password, \
-                             Bool, Directory, List, Property, DelegatesTo
-from traitsui.api import Group, Handler, HGroup, Item, View, HSplit, VSplit, ListStrEditor, TabularEditor
+                             Bool, Directory, List, Property, DelegatesTo, Button
+from traitsui.api import Group, Handler, HGroup, Item, View, HSplit, VSplit, ListStrEditor, TabularEditor, CustomEditor
 from traitsui.menu import Action, CloseAction, Menu, \
                                      MenuBar, NoButtons, Separator
 from traitsui.tabular_adapter import TabularAdapter
 
 import import_data
 
+import wx
+import matplotlib
+from mpl_figure_editor import MPLFigureEditor
 
+sys.path.append('/lab/software/apparatus3/py')
+import falsecolor
+import copy
     
 #-------------------------------------------------------------------------------
 #  Function to filter column density file names
@@ -107,6 +121,17 @@ class RemoteFits ( HasTraits ):
             return self.password
         
 #-------------------------------------------------------------------------------
+#  Matplotlib figure
+#-------------------------------------------------------------------------------
+def MakePlot( parent, editor):
+    fig = editor.object.figure
+    panel = wx.Panel(parent,-1)
+    canvas = matplotlib.backends.backend_wxagg.FigureCanvasWxAgg( panel, -1, fig)
+    toolbar = matplotlib.backends.backend_wx.NavigationToolbar2Wx(canvas)
+    toolbar.Realize()
+    return panel
+
+#-------------------------------------------------------------------------------
 #  ImageGUI class 
 #-------------------------------------------------------------------------------
 
@@ -118,7 +143,7 @@ class ImageGUI(HasTraits):
 
     #-- Get current data directory
     datadir = subprocess.Popen( 'gotodat', stdout=subprocess.PIPE).communicate()[0].strip()
-    print datadir
+    #print datadir
      
     #-- Shot traits
     #shotdir = Directory('/home/pmd/atomcool/lab/data/app3/2012/1203/120320/')
@@ -134,30 +159,31 @@ class ImageGUI(HasTraits):
     number = Float
      
     #-- Column density plot container
-    column_density = Instance(HPlotContainer)
+    #***column_density = Instance(HPlotContainer)
+    column_density = Instance( matplotlib.figure.Figure, ())
     #---- Plot components within this container
-    imgplot     = Instance(CMapImagePlot)
-    cross_plot  = Instance(Plot)
-    cross_plot2 = Instance(Plot)
-    colorbar    = Instance(ColorBar)
+    #***imgplot     = Instance(CMapImagePlot)
+    #***cross_plot  = Instance(Plot)
+    #***cross_plot2 = Instance(Plot)
+    #***colorbar    = Instance(ColorBar)
     #---- Plot data
     pd = Instance(ArrayPlotData)
     #---- Colorbar 
     num_levels = Int(15)
     colormap = Enum(color_map_name_dict.keys())
 
+    
+    replot = Button("replot")
+
     #-- Crosshair location
-    cursor = Instance(BaseCursorTool)
-    xy = DelegatesTo('cursor', prefix='current_position')
-    xpos = Float(0.)
-    ypos = Float(0.)
-    xpos_read = Float(0.)
-    ypos_read = Float(0.)
+    xpos = Int(0.)
+    ypos = Int(0.)
+    angle = Int(0.)
     cursor_group = Group( Group(Item('xpos', show_label=True), 
-	                        Item('xpos_read', show_label=False, style="readonly"),
 				orientation='horizontal'),
 			  Group(Item('ypos', show_label=True), 
-				Item('ypos_read', show_label=False, style="readonly"),
+				orientation='horizontal'),
+			  Group(Item('angle', show_label=True), 
 				orientation='horizontal'),
 		          orientation='vertical', layout='normal',springy=True)
 
@@ -171,6 +197,7 @@ class ImageGUI(HasTraits):
                       #Directory
                       Item( 'shotdir',style='simple', editor=DirectoryEditor(), width = 400, \
 				      show_label=False, resizable=False ),
+                           
                       #Bottom
                       HSplit(
 		        #-- Pane for shot selection
@@ -180,23 +207,24 @@ class ImageGUI(HasTraits):
 					editor = TabularEditor(selected='selectedshot',\
 					editable=False,multi_select=True,\
 					adapter=SelectAdapter()) ),
-			  cursor_group,
                           orientation='vertical',
 		          layout='normal', ),
 
 		        #-- Pane for column density plots
 			Group(
-			  Item('column_density',editor=ComponentEditor(), \
+			  Item('column_density',editor=MPLFigureEditor(), \
                                            show_label=False, width=600, height=500, \
                                            resizable=True ), 
 			  Item('report',show_label=False, width=180, \
 					springy=True, style='custom' ),
 			  layout='tabbed', springy=True),
 
-			#-- Pane for analysis results
+			#-- Pane for viewing controls
 			Group(
-		          Item('number',show_label=False)
-			  )
+                          Item('replot',show_label=False),
+			  cursor_group,
+                          orientation='vertical',
+		          layout='normal', ),
                       ),
                       orientation='vertical',
                       layout='normal',
@@ -235,144 +263,121 @@ class ImageGUI(HasTraits):
         super(ImageGUI, self).__init__(*args, **kwargs)
 
 	#-- after running the inherited __init__, a plot is created
-        self.create_plot()
 
 
 
     def create_plot(self):
+        print "Creating Plot..."
+ 
+        #print self.imgdata
+        rotimgdata = rotate(self.imgdata,  self.angle, reshape=True) 
 
-        #-- Create the index for the x an y axes and the range over
-	#-- which they vary
-        self._image_index = GridDataSource(array([]), array([]),
-                                          sort_order=("ascending","ascending"))
-        image_index_range = DataRange2D(self._image_index)
+
+        #pngname, figuresize, axesdef = falsecolor.inspecpng([self.imgdata] , self.xpos, self.ypos,  self.minz, self.maxz,\
+        #                          falsecolor.my_rainbow, "images_gui", 100, origin='upper', scale=0.5)
+
+        #grid pixels per inch
+
+        print type(rotimgdata.shape[1])
+        if ( rotimgdata.shape[1] > rotimgdata.shape[0] ):
+          landscape = True
+          ratio = float(rotimgdata.shape[0]) / float(rotimgdata.shape[1])
+        else:
+          landscape = False
+          ratio = float(rotimgdata.shape[1]) / float(rotimgdata.shape[0])
+
+        #
+        xstart = 0.06
+        ystart = 0.08
+        size = 0.6
+        if landscape:
+          xsize = size
+          ysize = size * ratio
+        else:
+          xsize = size * ratio
+          ysize = size
+        axRect1 = [xstart, ystart, xsize, ysize]
+
+        scale = 1.0
+        gap = 0.05*scale
+        #
+        ystart = axRect1[1] + axRect1[3] + gap
+        ysize  = 0.2 
+        axROWRect1 = [xstart, ystart, xsize, ysize]
+
+        #
+        xstart = axRect1[0] + axRect1[2] + 1.4*gap
+        xsize = 0.2
+        ystart = axRect1[1]
+        ysize = axRect1[3]
+        axCOLRect1 = [xstart, ystart, xsize, ysize]
         
-	#-- I believe this is what allows tracking the mouse
-        self._image_index.on_trait_change(self._metadata_changed,
-                                          "metadata_changed")
 
+        #os.remove(pngname)
+        for ax in self.column_density.get_axes():
+          ax.cla() 
+        self.column_density.clear()
+       
+        #figure = matplotlib.figure.Figure( figsize = (figuresize[0],figuresize[1]) )
+        axes = []
 
-	#-- Create the image values and determine their range
-        self._image_value = ImageData(data=array([]), value_depth=1)
-        image_value_range = DataRange1D(self._image_value)
+        #for rect in axesdef:
+        #  ax = self.column_density.add_axes( rect, frameon=True)
+        #  axes.append(ax)
+
+        ax = self.column_density.add_axes( axRect1, frameon=True)
+        axes.append(ax)
+        ax = self.column_density.add_axes( axROWRect1, sharex=axes[0])
+        axes.append(ax)
+        ax = self.column_density.add_axes( axCOLRect1, sharey=axes[0])
+        axes.append(ax)
+
+        axes[0].imshow( rotimgdata, cmap= falsecolor.my_rainbow, vmin=self.minz, vmax=self.maxz, origin='lower')
+    
+        row = self.ypos
+        col = self.xpos 
         
-        # Create the image plot
-        self.imgplot = CMapImagePlot( index=self._image_index,
-                                      value=self._image_value,
-                                      index_mapper=GridMapper(range=image_index_range),
-                                      color_mapper=self._cmap(image_value_range),)
-                                 
+        alphacross=0.4
+        axes[0].axhline( row, linewidth=0.8, color='black', alpha=alphacross)
+        axes[0].axvline( col, linewidth=0.8, color='black', alpha=alphacross)
+ 
+        axes[1].set_xlim( 0, len( rotimgdata[ row, :])-1)
+        axes[1].plot( rotimgdata[ row, :], color='blue')
 
-        # Add a left axis to the plot
-        left = PlotAxis(orientation='left',
-                        title= "axial",
-                        mapper=self.imgplot.index_mapper._ymapper,
-                        component=self.imgplot)
-        self.imgplot.overlays.append(left)
+        xarray = numpy.arange( len( rotimgdata[:, col] ))
+        axes[2].set_ylim( 0, len(xarray)-1 )
+        axes[2].plot( rotimgdata[ :, col], xarray, color='red')
+        #axes[2].yaxis.set_ticklabels([]) 
+        labels = axes[2].get_xticklabels()
+        for label in labels:
+          label.set_rotation(-90)
+       
+        #for ax in inspec_figure.get_axes():
+        #  self.column_density.add_axes(ax)
+        #  print ax
+        
 
-        # Add a bottom axis to the plot
-        bottom = PlotAxis(orientation='bottom',
-                          title= "radial",
-                          mapper=self.imgplot.index_mapper._xmapper,
-                          component=self.imgplot)
-        self.imgplot.overlays.append(bottom)
-
-
-        # Add some tools to the plot
-        self.imgplot.tools.append(PanTool(self.imgplot,drag_button="right",
-                                            constrain_key="shift"))
-
-        self.imgplot.overlays.append(ZoomTool(component=self.imgplot,
-                                            tool_mode="box", always_on=False))
-
-        # Create a colorbar
-        cbar_index_mapper = LinearMapper(range=image_value_range)
-        self.colorbar = ColorBar(index_mapper=cbar_index_mapper,
-                                 plot=self.imgplot,
-                                 padding_top=self.imgplot.padding_top,
-                                 padding_bottom=self.imgplot.padding_bottom,
-                                 padding_right=40,
-                                 resizable='v',
-                                 width=30)
-
-
-	# Add a cursor 
-	self.cursor = CursorTool( self.imgplot, drag_button="left", color="white")
-	# the cursor is a rendered component so it goes in the overlays list
-	self.imgplot.overlays.append(self.cursor)
-                        
-        # Create the two cross plots
-        self.pd = ArrayPlotData(line_index = array([]),
-                                line_value = array([]),
-                                scatter_index = array([]),
-                                scatter_value = array([]),
-                                scatter_color = array([]))
-
-        self.cross_plot = Plot(self.pd, resizable="h")
-        self.cross_plot.height = 100
-        self.cross_plot.padding = 20
-        self.cross_plot.plot(("line_index", "line_value"),
-                             line_style="dot")
-        self.cross_plot.plot(("scatter_index","scatter_value","scatter_color"),
-                             type="cmap_scatter",
-                             name="dot",
-                             color_mapper=self._cmap(image_value_range),
-                             marker="circle",
-                             marker_size=6)
-
-        self.cross_plot.index_range = self.imgplot.index_range.x_range
-
-        self.pd.set_data("line_index2", array([]))
-        self.pd.set_data("line_value2", array([]))
-        self.pd.set_data("scatter_index2", array([]))
-        self.pd.set_data("scatter_value2", array([]))
-        self.pd.set_data("scatter_color2", array([]))
-
-        self.cross_plot2 = Plot(self.pd, width = 140, orientation="v", resizable="v", padding=20, padding_bottom=160)
-        self.cross_plot2.plot(("line_index2", "line_value2"),
-                             line_style="dot")
-        self.cross_plot2.plot(("scatter_index2","scatter_value2","scatter_color2"),
-                             type="cmap_scatter",
-                             name="dot",
-                             color_mapper=self._cmap(image_value_range),
-                             marker="circle",
-                             marker_size=8)
-
-        self.cross_plot2.index_range = self.imgplot.index_range.y_range
-
-
-        # Create a container and add sub-containers and components
-        self.column_density = HPlotContainer(padding=40, fill_padding=True,
-                                        bgcolor = "white", use_backbuffer=False)
-        inner_cont = VPlotContainer(padding=0, use_backbuffer=True)
-        inner_cont.add(self.cross_plot)
-	self.imgplot.padding =20
-	inner_cont.add(self.imgplot)
-        self.column_density.add(self.colorbar)
-        self.column_density.add(inner_cont)
-        self.column_density.add(self.cross_plot2)
+        #self.column_density.canvas.draw() 
+        wx.CallAfter( self.column_density.canvas.draw)
+         
+        #axes = self.column_density.add_subplot(111)
+        #axes.imshow( rotimgdata) 
+        #wx.CallAfter( self.column_density.canvas.draw )
+        #t = numpy.linspace(0, 2*numpy.pi, 200)
+        #axes.plot(t, numpy.sin(t))
+        
+        return;
 
     def update(self):
 	#print self.cursor.current_index
 	#self.cursor.current_position = 100.,100.
         self.shots = self.populate_shot_list()
 	print self.selectedshot    
-        imgdata, self.report = self.load_imagedata()
-        if imgdata is not None:
-            self.minz = imgdata.min()
-            self.maxz = imgdata.max()
-            self.colorbar.index_mapper.range.low = self.minz
-            self.colorbar.index_mapper.range.high = self.maxz
-            xs=numpy.linspace(0,imgdata.shape[0],imgdata.shape[0]+1)
-            ys=numpy.linspace(0,imgdata.shape[1],imgdata.shape[1]+1)
-            #print xs
-            #print ys
-            self._image_index.set_data(xs,ys)
-            self._image_value.data = imgdata
-            self.pd.set_data("line_index", xs)
-            self.pd.set_data("line_index2",ys)
-            self.column_density.invalidate_draw()
-            self.column_density.request_redraw()                        
+        self.imgdata, self.report = self.load_imagedata()
+        if self.imgdata is not None:
+            self.minz = self.imgdata.min()
+            self.maxz = self.imgdata.max()
+            self.create_plot()
 
     def populate_shot_list(self):
         try:
@@ -410,6 +415,9 @@ class ImageGUI(HasTraits):
 	print self.selectedshot
         self.update()
 
+    def _replot_fired(self):
+        self.create_plot()
+
     def _shots_changed(self):
         self.shots = self.populate_shot_list()
 	return
@@ -420,49 +428,15 @@ class ImageGUI(HasTraits):
 
   
     def _xpos_changed(self):
-	self.cursor.current_position = self.xpos, self.ypos
+        print "_xy_changed"
+        print " xy = [%f,%f]" % (self.xpos, self.ypos)
     def _ypos_changed(self):
-	self.cursor.current_position = self.xpos, self.ypos
+        print "_xy_changed"
+        print " xy = [%f,%f]" % (self.xpos, self.ypos)
 
     def _metadata_changed(self):
 	self._xy_changed()
 	    
-    def _xy_changed(self):
-	self.xpos_read = self.cursor.current_index[0]
-	self.ypos_read = self.cursor.current_index[1]
-	#print self.cursor.current_index
-        """ This function takes out a cross section from the image data, based
-        on the cursor selections, and updates the line and scatter
-        plots."""
-        self.cross_plot.value_range.low = self.minz
-        self.cross_plot.value_range.high = self.maxz
-        self.cross_plot2.value_range.low = self.minz
-        self.cross_plot2.value_range.high = self.maxz
-        if True:
-            x_ndx, y_ndx = self.cursor.current_index
-            if y_ndx and x_ndx:
-                self.pd.set_data("line_value",
-				self._image_value.data[:,y_ndx])
-                self.pd.set_data("line_value2",
-				self._image_value.data[x_ndx,:])
-                xdata, ydata = self._image_index.get_data()
-                xdata, ydata = xdata.get_data(), ydata.get_data()
-                self.pd.set_data("scatter_index", array([ydata[y_ndx]]))
-                self.pd.set_data("scatter_index2", array([xdata[x_ndx]]))
-                self.pd.set_data("scatter_value",
-                    array([self._image_value.data[y_ndx, x_ndx]]))
-                self.pd.set_data("scatter_value2",
-                    array([self._image_value.data[y_ndx, x_ndx]]))
-                self.pd.set_data("scatter_color",
-                    array([self._image_value.data[y_ndx, x_ndx]]))
-                self.pd.set_data("scatter_color2",
-                    array([self._image_value.data[y_ndx, x_ndx]]))
-        else:
-            self.pd.set_data("scatter_value", array([]))
-            self.pd.set_data("scatter_value2", array([]))
-            self.pd.set_data("line_value", array([]))
-            self.pd.set_data("line_value2", array([]))
-
     def _colormap_changed(self):
         self._cmap = color_map_name_dict[self.colormap]
         if hasattr(self, "polyplot"):
